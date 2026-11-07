@@ -6,7 +6,8 @@ Run locally::
 
 Endpoints
 ---------
-POST /webhooks/twilio/whatsapp   Twilio inbound message webhook (TwiML)
+GET  /webhooks/whatsapp          Meta webhook verification handshake
+POST /webhooks/whatsapp          Meta inbound messages + statuses (JSON)
 GET  /health, /ready             liveness / readiness
 GET  /docs                       interactive OpenAPI docs
      /api/...                    admin API (X-API-Key when configured)
@@ -40,12 +41,12 @@ async def lifespan(app: FastAPI):
     if settings.dry_run:
         logger.warning(
             "DRY-RUN MODE: no WhatsApp messages will be transmitted. "
-            "Set DRY_RUN=false and configure Twilio credentials to go live."
+            "Set DRY_RUN=false and configure Meta credentials to go live."
         )
     if not settings.admin_api_key:
         logger.warning("ADMIN_API_KEY is not set: the admin API is unauthenticated")
-    if not settings.validate_twilio_signature:
-        logger.warning("Twilio signature validation is disabled")
+    if not settings.validate_meta_signature:
+        logger.warning("Meta X-Hub-Signature-256 validation is disabled")
 
     logger.info(
         "application ready",
@@ -89,7 +90,7 @@ def create_app() -> FastAPI:
         return {
             "service": settings.app_name,
             "docs": "/docs",
-            "webhook": "/webhooks/twilio/whatsapp",
+            "webhook": "/webhooks/whatsapp",
             "health": "/health",
         }
 

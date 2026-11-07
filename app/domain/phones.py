@@ -88,10 +88,18 @@ def normalize_phone(raw: str | None, default_country_code: str = "1") -> str:
     return e164
 
 
+def to_meta_recipient(e164: str) -> str:
+    """``+14155550123`` -> ``14155550123`` (Cloud API addressing).
+
+    Meta's Graph API expects the recipient as digits only, including the country
+    code and without a leading ``+`` or any ``whatsapp:`` prefix.
+    """
+    return normalize_phone(e164).lstrip("+")
+
+
 def to_whatsapp_uri(e164: str) -> str:
-    """``+14155550123`` -> ``whatsapp:+14155550123`` (Twilio addressing)."""
-    number = normalize_phone(e164)
-    return f"whatsapp:{number}"
+    """``+14155550123`` -> ``whatsapp:+14155550123`` (deep links / QR codes)."""
+    return f"whatsapp:{normalize_phone(e164)}"
 
 
 def mask_phone(e164: str) -> str:

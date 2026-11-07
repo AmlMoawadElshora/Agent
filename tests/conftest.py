@@ -1,18 +1,18 @@
 """Shared pytest fixtures.
 
-The suite runs entirely offline: SQLite in memory, console sender (no Twilio),
-no LLM.  Every test gets a clean schema and a fresh dry-run outbox.
+The suite runs entirely offline: SQLite in memory, console sender (no Graph API
+calls), no LLM.  Every test gets a clean schema and a fresh dry-run outbox.
 """
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
+import json
 import os
 import uuid
 from collections.abc import Iterator
-from urllib.parse import urlencode
+from typing import Any
 
 import pytest
 
@@ -23,15 +23,21 @@ os.environ.update(
         "DATABASE_URL": "sqlite://",
         "DRY_RUN": "true",
         "ADMIN_WHATSAPP_NUMBER": "01020645167",
-        "TWILIO_WHATSAPP_FROM": "whatsapp:+14155238886",
-        "TWILIO_ACCOUNT_SID": "ACtest0000000000000000000000000000",
-        "TWILIO_AUTH_TOKEN": "test-auth-token",
-        "VALIDATE_TWILIO_SIGNATURE": "true",
+        # Meta Cloud API credentials
+        "META_ACCESS_TOKEN": "test-meta-token",
+        "META_PHONE_NUMBER_ID": "1029384756",
+        "META_WABA_ID": "99887766",
+        "META_VERIFY_TOKEN": "test-verify-token",
+        "META_APP_SECRET": "test-app-secret",
+        "VALIDATE_META_SIGNATURE": "true",
+        "META_WELCOME_TEMPLATE_NAME": "real_estate_opener",
+        "META_TEMPLATE_LANGUAGE": "en_US",
+        "META_TEMPLATE_PARAMS": "first_name",
+        # app
         "PUBLIC_BASE_URL": "http://testserver",
         "ADMIN_API_KEY": "test-admin-key",
         "LLM_ENABLED": "false",
         "MAX_QUESTIONS_PER_SLOT": "3",
-        "REPLY_MODE": "twiml",
         "LOG_LEVEL": "WARNING",
     }
 )
@@ -43,14 +49,19 @@ from app.agent.llm import reset_llm_client  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.db.base import get_engine, init_db, reset_state  # noqa: E402
 from app.db.models import Base  # noqa: E402
+from app.domain.phones import normalize_phone, to_meta_recipient  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.services.locks import reset_locks  # noqa: E402
-from app.services.whatsapp import SenderRouter, set_sender  # noqa: E402
+from app.services.whatsapp import SenderRouter, get_sender, set_sender  # noqa: E402
 
 ADMIN_PHONE_E164 = "+11020645167"
 LEAD_PHONE_E164 = "+11020645168"
-WEBHOOK_PATH = "/webhooks/twilio/whatsapp"
+LEAD_PHONE_LOCAL = "01020645168"
+WEBHOOK_PATH = "/webhooks/whatsapp"
 ADMIN_API_KEY = "test-admin-key"
+META_APP_SECRET = "test-app-secret"
+META_VERIFY_TOKEN = "test-verify-token"
+META_PHONE_NUMBER_ID = "1029384756"
 
 
 @pytest.fixture(autouse=True)
@@ -95,68 +106,149 @@ def admin_headers() -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------- #
-# Twilio helpers
+# Meta Cloud API helpers
 # --------------------------------------------------------------------------- #
-def sign_twilio_request(url: str, params: dict[str, str], token: str = "test-auth-token") -> str:
-    payload = url + "".join(f"{key}{params[key]}" for key in sorted(params))
-    digest = hmac.new(token.encode(), payload.encode(), hashlib.sha1).digest()
-    return base64.b64encode(digest).decode()
+def sign_meta_payload(raw_body: bytes, secret: str = META_APP_SECRET) -> str:
+    """Build the ``X-Hub-Signature-256`` value Meta would send."""
+    digest = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
 
 
-def inbound_form(
+def inbound_payload(
     body: str,
     *,
-    from_number: str = "01020645168",
-    sid: str | None = None,
+    from_number: str = LEAD_PHONE_LOCAL,
+    wamid: str | None = None,
     profile_name: str = "John Smith",
-) -> dict[str, str]:
-    return {
-        "From": f"whatsapp:{from_number}",
-        "To": "whatsapp:+14155238886",
-        "Body": body,
-        "MessageSid": sid or f"SM{uuid.uuid4().hex}",
-        "ProfileName": profile_name,
-        "NumMedia": "0",
-        "SmsStatus": "received",
+    message_type: str = "text",
+    media_id: str = "media-123",
+) -> dict[str, Any]:
+    """A realistic Cloud API ``messages`` webhook payload."""
+    mid = wamid or f"wamid.{uuid.uuid4().hex}"
+    recipient = to_meta_recipient(from_number)
+
+    message: dict[str, Any] = {
+        "from": recipient,
+        "id": mid,
+        "timestamp": "1735689600",
+        "type": message_type,
     }
+    if message_type == "text":
+        message["text"] = {"body": body}
+    elif message_type == "image":
+        message["image"] = {"id": media_id, "mime_type": "image/jpeg", "caption": body}
+    elif message_type == "button":
+        message["button"] = {"text": body, "payload": body}
+    elif message_type == "interactive":
+        message["interactive"] = {
+            "type": "button_reply",
+            "button_reply": {"id": "p1", "title": body},
+        }
+
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "99887766",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {
+                                "display_phone_number": "14155238886",
+                                "phone_number_id": META_PHONE_NUMBER_ID,
+                            },
+                            "contacts": [
+                                {
+                                    "profile": {"name": profile_name},
+                                    "wa_id": recipient,
+                                }
+                            ],
+                            "messages": [message],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def status_payload(provider_sid: str, status: str = "delivered") -> dict[str, Any]:
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "99887766",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {"phone_number_id": META_PHONE_NUMBER_ID},
+                            "statuses": [
+                                {
+                                    "id": provider_sid,
+                                    "status": status,
+                                    "timestamp": "1735689600",
+                                    "recipient_id": to_meta_recipient(LEAD_PHONE_LOCAL),
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def replies_to(from_number: str = LEAD_PHONE_LOCAL) -> list[dict[str, Any]]:
+    """Dry-run outbox entries addressed to ``from_number``."""
+    target = normalize_phone(from_number)
+    router = get_sender()
+    console = getattr(router, "console", None)
+    if console is None:
+        return []
+    return [m for m in console.outbox if m.get("to") == target]
 
 
 def post_inbound(
     client: TestClient,
     body: str,
     *,
-    from_number: str = "01020645168",
-    sid: str | None = None,
+    from_number: str = LEAD_PHONE_LOCAL,
+    wamid: str | None = None,
     profile_name: str = "John Smith",
+    message_type: str = "text",
     signature: str | None = None,
     sign: bool = True,
-) -> tuple[object, str]:
-    """POST a signed Twilio webhook and return ``(response, reply_text)``."""
-    form = inbound_form(body, from_number=from_number, sid=sid, profile_name=profile_name)
-    url = f"http://testserver{WEBHOOK_PATH}"
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    if sign:
-        headers["X-Twilio-Signature"] = signature or sign_twilio_request(url, form)
-
-    response = client.post(
-        WEBHOOK_PATH,
-        content=urlencode(form),
-        headers=headers,
+) -> tuple[Any, str]:
+    """POST a signed Meta webhook and return ``(response, last reply text)``."""
+    payload = inbound_payload(
+        body,
+        from_number=from_number,
+        wamid=wamid,
+        profile_name=profile_name,
+        message_type=message_type,
     )
-    return response, extract_twiml_message(response.text)
+    raw = json.dumps(payload).encode()
+    headers = {"Content-Type": "application/json"}
+    if sign:
+        headers["X-Hub-Signature-256"] = signature or sign_meta_payload(raw)
+
+    before = len(replies_to(from_number))
+    response = client.post(WEBHOOK_PATH, content=raw, headers=headers)
+    new_replies = replies_to(from_number)[before:]
+    return response, (new_replies[-1]["body"] if new_replies else "")
 
 
-def extract_twiml_message(xml_text: str) -> str:
-    import re
-
-    match = re.search(r"<Message>(.*?)</Message>", xml_text, re.DOTALL)
-    if not match:
-        return ""
-    return (
-        match.group(1)
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", '"')
-        .replace("&apos;", "'")
+def post_status(client: TestClient, provider_sid: str, status: str = "delivered"):
+    raw = json.dumps(status_payload(provider_sid, status)).encode()
+    return client.post(
+        WEBHOOK_PATH,
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": sign_meta_payload(raw),
+        },
     )

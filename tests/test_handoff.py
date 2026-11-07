@@ -95,7 +95,7 @@ class _FailingSender:
 
     def send_whatsapp(self, to: str, body: str) -> SendResult:
         self.calls += 1
-        return SendResult(ok=False, error="twilio 21610: recipient not joined")
+        return SendResult(ok=False, error="meta 400 code=131026: recipient not available")
 
 
 def test_failed_handoff_keeps_lead_qualified_for_retry(qualified_lead) -> None:
@@ -106,7 +106,7 @@ def test_failed_handoff_keeps_lead_qualified_for_retry(qualified_lead) -> None:
         db.commit()
 
         assert outcome.delivered is False
-        assert "21610" in (outcome.error or "")
+        assert "131026" in (outcome.error or "")
         assert lead.status == LeadStatus.QUALIFIED.value
         handoff = repository.latest_handoff(db, lead.id)
         assert handoff.status == HandoffStatus.FAILED.value

@@ -46,17 +46,31 @@ class Settings(BaseSettings):
     # which is fine for a single worker.  Use Redis for multi-worker setups.
     redis_url: str | None = None
 
-    # --------------------------------------------------------------- twilio
-    twilio_account_sid: str | None = None
-    twilio_auth_token: str | None = None
-    # Sandbox default: the Twilio WhatsApp sandbox sender.
-    twilio_whatsapp_from: str = "whatsapp:+14155238886"
+    # ------------------------------------------------- meta whatsapp cloud api
+    # Official Meta WhatsApp Cloud API (Graph API) credentials.
+    meta_access_token: str | None = None
+    meta_phone_number_id: str | None = None
+    # Optional: WhatsApp Business Account id, used for logging/ops only.
+    meta_waba_id: str | None = None
+    # Echoed back during the webhook verification handshake (hub.verify_token).
+    meta_verify_token: str = "change-me-verify-token"
+    # App secret from the Meta app dashboard; enables X-Hub-Signature-256 checks.
+    meta_app_secret: str | None = None
+    meta_api_version: str = "v18.0"
+    meta_graph_base_url: str = "https://graph.facebook.com"
+    meta_request_timeout_seconds: float = 15.0
+    meta_max_retries: int = 2
+    # Approved template used for the business-initiated campaign opener.
+    # Leave empty to send a plain text opener (only valid inside a 24h window).
+    meta_welcome_template_name: str | None = None
+    meta_template_language: str = "en_US"
+    # Comma separated template body variables rendered from the lead, e.g.
+    # "first_name,company". Supported tokens: first_name, full_name, agent,
+    # company, market. Empty = template without variables.
+    meta_template_params: str = ""
     # Signature validation must stay enabled in production.  It is disabled
-    # automatically when no auth token is configured (local dev / tests).
-    validate_twilio_signature: bool = True
-    # "twiml" replies inside the webhook response (no extra API call),
-    # "api" sends the message through the Twilio REST API instead.
-    reply_mode: Literal["twiml", "api"] = "twiml"
+    # automatically when no app secret is configured (local dev / tests).
+    validate_meta_signature: bool = True
     # Global kill-switch: when true messages are logged, never transmitted.
     dry_run: bool = True
     outbound_rate_limit_per_second: float = 1.0
@@ -86,7 +100,7 @@ class Settings(BaseSettings):
     # After N attempts on the same slot we stop re-asking and hand the lead to
     # a human instead of looping forever.
     max_questions_per_slot: int = 3
-    # Twilio retries webhooks; anything older than this is rejected.
+    # Meta retries webhooks; anything older than this is rejected.
     webhook_max_skew_seconds: int = 300
 
     @field_validator("log_level")
@@ -94,31 +108,29 @@ class Settings(BaseSettings):
     def _upper(cls, value: str) -> str:
         return value.upper()
 
-    @field_validator("admin_whatsapp_number", "twilio_whatsapp_from")
+    @field_validator("admin_whatsapp_number")
     @classmethod
     def _normalize_numbers(cls, value: str) -> str:
         """Store every phone number in E.164 so comparisons never fail."""
         if not value:
             return value
-        prefix = ""
-        candidate = value
-        if candidate.startswith("whatsapp:"):
-            prefix = "whatsapp:"
-            candidate = candidate[len(prefix) :]
-        return f"{prefix}{normalize_phone(candidate)}"
+        return normalize_phone(value.replace("whatsapp:", ""))
 
     # ----------------------------------------------------------- helpers
-    @property
-    def normalized_twilio_from(self) -> str:
-        return self.twilio_whatsapp_from
-
     @property
     def admin_phone_e164(self) -> str:
         return self.admin_whatsapp_number.replace("whatsapp:", "")
 
     @property
-    def twilio_from_e164(self) -> str:
-        return self.twilio_whatsapp_from.replace("whatsapp:", "")
+    def admin_recipient(self) -> str:
+        """Cloud API addressing: digits only, no leading ``+``."""
+        return self.admin_phone_e164.lstrip("+")
+
+    @property
+    def meta_messages_url(self) -> str:
+        """``https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages``."""
+        base = self.meta_graph_base_url.rstrip("/")
+        return f"{base}/{self.meta_api_version}/{self.meta_phone_number_id}/messages"
 
     @property
     def ordered_slots(self) -> list[str]:
@@ -131,12 +143,16 @@ class Settings(BaseSettings):
         return valid
 
     @property
-    def twilio_configured(self) -> bool:
-        return bool(self.twilio_account_sid and self.twilio_auth_token)
+    def template_params(self) -> list[str]:
+        return [p.strip().lower() for p in self.meta_template_params.split(",") if p.strip()]
+
+    @property
+    def meta_configured(self) -> bool:
+        return bool(self.meta_access_token and self.meta_phone_number_id)
 
     @property
     def signature_validation_active(self) -> bool:
-        return self.validate_twilio_signature and bool(self.twilio_auth_token)
+        return self.validate_meta_signature and bool(self.meta_app_secret)
 
 
 @lru_cache

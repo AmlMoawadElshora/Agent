@@ -2,7 +2,7 @@
 
 The card is sent to ``ADMIN_WHATSAPP_NUMBER`` (default ``01020645167``) and
 every attempt is persisted in the ``handoffs`` table so nothing is silently
-lost when Twilio has an outage.  A failed card keeps the lead in
+lost when the Graph API has an outage.  A failed card keeps the lead in
 ``QUALIFIED`` state, which means the next inbound message retries the handoff.
 """
 

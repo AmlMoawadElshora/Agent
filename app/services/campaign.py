@@ -1,5 +1,10 @@
 """Outbound campaign: send the opening WhatsApp message to a prospect list.
 
+The opener is a *business-initiated* message, so the WhatsApp Cloud API requires
+an approved template for it (``META_WELCOME_TEMPLATE_NAME``).  When no template
+is configured we fall back to a plain text message, which only works inside an
+open 24-hour customer-service window — fine for re-engagement, demos, and tests.
+
 Usage is intentionally boring and safe:
 
 * Terminal leads (already handed off / opted out) and duplicates are skipped.
@@ -12,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -26,7 +32,12 @@ from app.domain.schemas import (
     CampaignResultItem,
     LeadCreate,
 )
-from app.services.whatsapp import SenderRouter, get_sender
+from app.services.whatsapp import (
+    SenderRouter,
+    SendResult,
+    get_sender,
+    render_template_parameters,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +46,43 @@ _SKIP_STATUSES = {
     LeadStatus.OPTED_OUT.value,
     LeadStatus.FAILED.value,
 }
+
+
+def dispatch_opening(
+    sender: SenderRouter,
+    lead: Lead,
+    settings: Settings,
+    body: str,
+) -> tuple[SendResult, dict[str, Any]]:
+    """Send the opener as an approved template when one is configured.
+
+    Returns ``(result, metadata)`` so the caller can persist a readable
+    transcript entry plus the template provenance.
+    """
+    template = settings.meta_welcome_template_name
+    if not template:
+        return sender.send_whatsapp(lead.phone_number, body), {"message_type": "text"}
+
+    parameters = render_template_parameters(settings, lead)
+    send_template = getattr(sender, "send_template", None)
+    if send_template is None:  # custom sender without template support
+        return sender.send_whatsapp(lead.phone_number, body), {"message_type": "text"}
+
+    result = send_template(
+        lead.phone_number,
+        template,
+        settings.meta_template_language,
+        parameters,
+        fallback_text=body,
+    )
+    return result, {
+        "message_type": "template",
+        "template": {
+            "name": template,
+            "language": settings.meta_template_language,
+            "parameters": parameters,
+        },
+    }
 
 
 def send_opening_message(
@@ -66,7 +114,7 @@ def send_opening_message(
         )
 
     body = greeting(lead.full_name)
-    result = sender.send_whatsapp(lead.phone_number, body)
+    result, metadata = dispatch_opening(sender, lead, settings, body)
 
     repository.add_message(
         db,
@@ -76,7 +124,12 @@ def send_opening_message(
         body=body,
         provider_sid=result.sid,
         delivery_status=result.status if result.ok else "failed",
-        metadata={"error": result.error, "dry_run": result.dry_run},
+        metadata={
+            "error": result.error,
+            "dry_run": result.dry_run,
+            "provider": "meta_cloud_api",
+            **metadata,
+        },
     )
 
     if not result.ok:

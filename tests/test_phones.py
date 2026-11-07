@@ -8,6 +8,7 @@ from app.domain.phones import (
     PhoneNumberError,
     mask_phone,
     normalize_phone,
+    to_meta_recipient,
     to_whatsapp_uri,
 )
 
@@ -44,7 +45,12 @@ def test_normalize_rejects_garbage(raw: str | None) -> None:
         normalize_phone(raw)
 
 
-def test_whatsapp_uri() -> None:
+def test_meta_recipient_is_digits_only() -> None:
+    assert to_meta_recipient("01020645167") == "11020645167"
+    assert to_meta_recipient("+1 (415) 555-0123") == "14155550123"
+
+
+def test_whatsapp_uri_for_deep_links() -> None:
     assert to_whatsapp_uri("01020645167") == "whatsapp:+11020645167"
 
 

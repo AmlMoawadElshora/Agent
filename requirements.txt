@@ -11,8 +11,8 @@ SQLAlchemy>=2.0,<3.0
 psycopg2-binary>=2.9      # PostgreSQL driver (production)
 redis>=5.0                # optional conversation locks / cache
 
-# --- WhatsApp (Twilio) ------------------------------------------------------
-twilio>=9.0
+# --- WhatsApp (Meta Cloud API) ----------------------------------------------
+# Messages are sent with httpx directly to graph.facebook.com; no vendor SDK.
 
 # --- Agent orchestration ----------------------------------------------------
 langgraph>=0.2

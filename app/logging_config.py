@@ -47,7 +47,7 @@ def configure_logging(level: str = "INFO") -> None:
     root.addHandler(handler)
     root.setLevel(level.upper())
 
-    # Twilio's HTTP client is chatty at INFO.
+    # Third-party HTTP clients are chatty at INFO.
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("twilio").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
     root._agent_configured = True

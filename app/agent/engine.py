@@ -92,7 +92,7 @@ class ConversationEngine:
                 source="whatsapp_inbound",
             )
 
-            # Twilio retries webhooks for up to 15 minutes; MessageSid dedupe
+            # Meta retries webhooks for up to 7 days; wamid dedupe
             # guarantees a reply is never generated twice.
             if provider_sid and repository.find_message_by_sid(db, provider_sid):
                 logger.info("duplicate webhook ignored", extra={"sid": provider_sid})
@@ -290,31 +290,16 @@ class ConversationEngine:
             }
 
     def _deliver(self, db: Session, lead: Lead, text: str, kind: Any) -> str:
-        """Persist and transmit an outbound message.
+        """Persist and transmit an outbound message through the Cloud API.
 
-        Returns the text that must be returned as TwiML (empty when the message
-        was already sent through the REST API).
+        Returns the text that was handed to the transport (so callers/logs keep
+        a readable copy); the actual delivery happens over HTTPS to Meta.
         """
         if not text:
             return ""
 
         kind_value = kind.value if hasattr(kind, "value") else str(kind)
-
-        if self.settings.reply_mode == "api":
-            result = self.sender.send_whatsapp(lead.phone_number, text)
-            repository.add_message(
-                db,
-                lead,
-                direction=MessageDirection.OUTBOUND,
-                kind=kind_value,
-                body=text,
-                provider_sid=result.sid,
-                delivery_status=result.status if result.ok else "failed",
-                metadata={"error": result.error, "dry_run": result.dry_run},
-            )
-            if result.ok:
-                return ""
-            logger.warning("REST reply failed; falling back to TwiML delivery")
+        result = self.sender.send_whatsapp(lead.phone_number, text)
 
         repository.add_message(
             db,
@@ -322,8 +307,21 @@ class ConversationEngine:
             direction=MessageDirection.OUTBOUND,
             kind=kind_value,
             body=text,
-            delivery_status="queued_twiml",
+            provider_sid=result.sid,
+            delivery_status=result.status if result.ok else "failed",
+            metadata={
+                "error": result.error,
+                "dry_run": result.dry_run,
+                "provider": "meta_cloud_api",
+                "message_type": "text",
+            },
         )
+
+        if not result.ok:
+            logger.warning(
+                "outbound reply failed",
+                extra={"lead_id": lead.id, "error": result.error},
+            )
         return text
 
     def _handoff(self, db: Session, lead: Lead) -> HandoffOutcome | None:

@@ -113,7 +113,7 @@ class Message(Base):
     kind: Mapped[str] = mapped_column(String(30), default=MessageKind.INBOUND.value, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # Twilio MessageSid — unique so webhook retries never double-process.
+    # Meta message id (wamid...) — unique so webhook retries never double-process.
     provider_sid: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     delivery_status: Mapped[str | None] = mapped_column(String(30))
     message_metadata: Mapped[dict[str, Any]] = mapped_column(

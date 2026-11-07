@@ -7,7 +7,7 @@ Dry run (default — logs only)::
 
     python -m scripts.campaign --numbers 01020645167,01131043304,01032547715
 
-Live run (requires DRY_RUN=false + Twilio credentials in the environment)::
+Live run (requires DRY_RUN=false + META_ACCESS_TOKEN and META_PHONE_NUMBER_ID)::
 
     python -m scripts.campaign --numbers 01020645167,01131043304 --live
 
@@ -98,7 +98,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--live",
         action="store_true",
-        help="Actually transmit (requires DRY_RUN=false and Twilio credentials)",
+        help="Actually transmit (requires DRY_RUN=false and Meta credentials)",
     )
     parser.add_argument("--log-level", default=None)
     return parser.parse_args(argv)

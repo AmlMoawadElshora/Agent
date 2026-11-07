@@ -33,7 +33,7 @@ def health(settings: Settings = Depends(get_settings)) -> dict[str, object]:
         "environment": settings.environment,
         "dry_run": settings.dry_run,
         "llm_enabled": settings.llm_enabled,
-        "twilio_configured": settings.twilio_configured,
+        "meta_configured": settings.meta_configured,
         "admin_number_configured": bool(settings.admin_whatsapp_number),
     }
 

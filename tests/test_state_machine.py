@@ -1,4 +1,4 @@
-"""End-to-end conversation behaviour (no HTTP, no Twilio, no LLM).
+"""End-to-end conversation behaviour (no HTTP, no Graph API, no LLM).
 
 Runs the same scenarios twice: through LangGraph and through the
 dependency-free execution path, so both orchestrators stay in lock-step.
@@ -249,7 +249,7 @@ def test_follow_up_after_handoff_does_not_re_handoff(engine, sender, use_graph) 
     assert "already has your details" in outcome.reply.lower()
     admin_cards = [m for m in sender.console.outbox if m["to"] == ADMIN_PHONE_E164]
     assert len(admin_cards) == 1
-    assert len(sender.console.outbox) == outbox_after_handoff
+    assert len(sender.console.outbox) == outbox_after_handoff + 1
 
 
 def test_handoff_retries_after_transport_failure(engine, sender, use_graph) -> None:
@@ -265,7 +265,7 @@ def test_handoff_retries_after_transport_failure(engine, sender, use_graph) -> N
         def send_whatsapp(self, to: str, body: str) -> SendResult:
             if self.fail_next and to == ADMIN_PHONE_E164:
                 self.fail_next = False
-                return SendResult(ok=False, error="simulated twilio outage")
+                return SendResult(ok=False, error="simulated graph api outage")
             self.outbox.append({"to": to, "body": body, "sid": f"SM{len(self.outbox)}"})
             return SendResult(ok=True, sid=f"SM{len(self.outbox)}", status="sent")
 
